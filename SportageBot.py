@@ -21,6 +21,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
 logging.getLogger('telegram.ext.Application').setLevel(logging.WARNING)
 
 db = {}
