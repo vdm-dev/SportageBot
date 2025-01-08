@@ -132,6 +132,78 @@ def check_pno(pno):
 
     return {'text' : text, 'media' : media}
 
+def list_group(group: str):
+    global db
+
+    text = ''
+    media = []
+    catalogue = 'GENKFM002A'
+    cursor = db[catalogue] if catalogue in db else None
+    parts = None
+    if not cursor:
+        return text
+    cursor.execute('SELECT * FROM MDBCDMPF WHERE CDGRNO = ?', (group, ))
+    parts = cursor.fetchall()
+    if not parts or len(parts) < 1:
+        return text
+    processed_parts = {}
+    for part in parts:
+        if part["CDKEY1"] in processed_parts:
+            continue
+        partName = fetch_cat_record(catalogue, 'MDBPNCPF', 'PNPNCD', part["CDPNCD"])
+        partCount = part["CDCQTY"].lstrip('0')
+        if partCount and partCount != '1':
+            partCount = f' \\(*{partCount}* шт\\.\\)'
+        else:
+            partCount = ''
+        processed_parts[int(part["CDKEY1"])] = f'*{part["CDKEY1"]}* `/p {part["CDPTNO"]}` {partCount}\n'
+
+    for key in sorted(processed_parts):
+        text += processed_parts[key]
+
+    return text
+
+def check_group(cmd: str, pattern: str):
+    global db
+
+    text = ''
+    media = []
+    catalogue = 'GENKFM002A'
+    cursor = db[catalogue] if catalogue in db else None
+    groups = None
+    if not cursor:
+        return {'text' : text, 'media' : media}
+
+    pattern_ru = pattern.lower()
+    cursor.execute('SELECT * FROM MDBGNMPF WHERE GNGRNO = ? OR GNLGEG LIKE ? OR GNLGRU LIKE ?', (pattern, f'%{pattern}%', f'%{pattern_ru}%', ))
+    groups = cursor.fetchall()
+    if not groups or len(groups) < 1:
+        return {'text' : text, 'media' : media}
+    elif len(groups) > 1:
+        text = 'Обнаружено несколько групп:\n'
+        for group in groups:
+            for i in range(1, 4):
+                path = Path(f'GROUP/{catalogue}/{group["GNGRNO"]}{i}1.png')
+                if path.is_file():
+                    try:
+                        media.append(InputMediaPhoto(open(path, 'rb')))
+                    except Exception:
+                        pass
+            text += f'`{cmd} {group["GNGRNO"]}` \\- {escape_markdown(group["GNLGEG"], 2)} \\({escape_markdown(group["GNLGRU"], 2)}\\)\n'
+    else:
+        group = groups[0]
+        for i in range(1, 4):
+            path = Path(f'GROUP/{catalogue}/{group["GNGRNO"]}{i}1.png')
+            if path.is_file():
+                try:
+                    media.append(InputMediaPhoto(open(path, 'rb')))
+                except Exception:
+                    pass
+        text = f'Группа: {group["GNGRNO"]} \\- *{escape_markdown(group["GNLGEG"], 2)}* \\({escape_markdown(group["GNLGRU"], 2)}\\)\n'
+        text += list_group(group["GNGRNO"])
+
+    return {'text' : text, 'media' : media}
+
 async def on_vin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
@@ -190,6 +262,40 @@ async def on_part(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         await update.message.reply_markdown_v2('Запчасть с таким номером не найдена\\.')
 
+async def on_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+
+    user = update.effective_user.mention_markdown_v2()
+
+    cmd = ''
+    pattern = ''
+    text = ''
+    media = []
+    lower_bound = 4
+    if update.message.text:
+        arguments = update.message.text.split(' ', 1)
+        cmd = arguments[0]
+        if len(arguments) > 1:
+            pattern = arguments[1].strip().upper()[:64]
+    if len(pattern) >= lower_bound:
+        result = check_group(cmd, pattern)
+        text = result['text']
+        media = result['media']
+    else:
+        text = f'Вы забыли написать наименование группы или оно слишком короткое \\(меньше {lower_bound} символов\\)\\.\nПримеры запросов:\n'
+        text += f'`{cmd} 0900A`\n'
+        text += f'`{cmd} valve`\n'
+        text += f'`{cmd} усилитель`\n'
+        logger.info(f'Пользователь {user} отправил пустой номер группы')
+
+    if media:
+        await update.message.reply_media_group(media, caption=text, parse_mode=ParseMode.MARKDOWN_V2)
+    elif text:
+        await update.message.reply_markdown_v2(text)
+    else:
+        await update.message.reply_markdown_v2('Не удалось найти ни одной группы по вашему запросу\\.')
+
 async def on_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = 'Доступные команды:\n\n'
     text += '/vin - получить информацию об автомобиле по VIN-номеру.\n'
@@ -238,6 +344,7 @@ def main() -> None:
     application.add_handler(CommandHandler('help', on_help))
     application.add_handler(CommandHandler('vin', on_vin))
     application.add_handler(CommandHandler(['p', 'part'], on_part))
+    application.add_handler(CommandHandler(['g', 'group'], on_group))
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
