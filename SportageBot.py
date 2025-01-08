@@ -89,6 +89,17 @@ def fetch_cat_record(catalogue, table, key, value):
         return result[0]
     return None
 
+def get_media(catalogue: str, group: str):
+    media = []
+    for i in range(1, 4):
+        path = Path(f'GROUP/{catalogue}/{group}{i}1.png')
+        if path.is_file():
+            try:
+                media.append(InputMediaPhoto(open(path, 'rb')))
+            except Exception:
+                pass
+    return media
+
 def check_pno(pno):
     global db
 
@@ -106,13 +117,7 @@ def check_pno(pno):
         partName = fetch_cat_record(catalogue, 'MDBPNCPF', 'PNPNCD', part["CDPNCD"])
         text = f'Информация о запчасти *{part["CDPTNO"]}*:\n'
 
-        for i in range(1, 4):
-            path = Path(f'GROUP/{catalogue}/{part["CDGRNO"]}{i}1.png')
-            if path.is_file():
-                try:
-                    media.append(InputMediaPhoto(open(path, 'rb')))
-                except Exception:
-                    pass
+        media = get_media(catalogue, part["CDGRNO"])
 
         if partName:
             text += f'Наименование: *{escape_markdown(partName["PNLGEG"], 2)}* \\({escape_markdown(partName["PNLGRU"], 2)}\\)\n'
@@ -166,43 +171,52 @@ def list_group(group: str):
 def check_group(cmd: str, pattern: str):
     global db
 
-    text = ''
-    media = []
+    result = {'text': '', 'media': None}
+
     catalogue = 'GENKFM002A'
     cursor = db[catalogue] if catalogue in db else None
-    groups = None
     if not cursor:
-        return {'text' : text, 'media' : media}
+        return result
 
-    pattern_ru = pattern.lower()
-    cursor.execute('SELECT * FROM MDBGNMPF WHERE GNGRNO = ? OR GNLGEG LIKE ? OR GNLGRU LIKE ?', (pattern, f'%{pattern}%', f'%{pattern_ru}%', ))
+    cursor.execute('SELECT * FROM MDBGNMPF WHERE GNGRNO = ?', (pattern, ))
     groups = cursor.fetchall()
     if not groups or len(groups) < 1:
-        return {'text' : text, 'media' : media}
-    elif len(groups) > 1:
-        text = 'Обнаружено несколько групп:\n'
-        for group in groups:
-            for i in range(1, 4):
-                path = Path(f'GROUP/{catalogue}/{group["GNGRNO"]}{i}1.png')
-                if path.is_file():
-                    try:
-                        media.append(InputMediaPhoto(open(path, 'rb')))
-                    except Exception:
-                        pass
-            text += f'`{cmd} {group["GNGRNO"]}` \\- {escape_markdown(group["GNLGEG"], 2)} \\({escape_markdown(group["GNLGRU"], 2)}\\)\n'
-    else:
+        pattern_ru = pattern.lower()
+        cursor.execute('SELECT * FROM MDBGNMPF WHERE GNLGEG LIKE ? OR GNLGRU LIKE ?', (f'%{pattern}%', f'%{pattern_ru}%', ))
+        groups = cursor.fetchall()
+
+    lower_bound = 4
+
+    if not groups or len(groups) < 1:
+        return result
+    elif len(groups) == 1:
         group = groups[0]
-        for i in range(1, 4):
-            path = Path(f'GROUP/{catalogue}/{group["GNGRNO"]}{i}1.png')
-            if path.is_file():
-                try:
-                    media.append(InputMediaPhoto(open(path, 'rb')))
-                except Exception:
-                    pass
         text = f'Группа: {group["GNGRNO"]} \\- *{escape_markdown(group["GNLGEG"], 2)}* \\({escape_markdown(group["GNLGRU"], 2)}\\)\n'
         text += list_group(group["GNGRNO"])
+        result = {'text' : text, 'media' : get_media(catalogue, group["GNGRNO"])}
+    elif len(groups) <= lower_bound:
+        text = 'Обнаружено несколько групп запчастей:\n'
+        media = []
+        for group in groups:
+            gmedia = get_media(catalogue, group["GNGRNO"])
+            picture_numbers = ''
+            if len(gmedia) == 1:
+                picture_numbers = f'\\(рис\\. *{len(media) + 1}*\\) '
+            elif len(gmedia) > 1:
+                start = len(media) + 1
+                end = len(media) + len(gmedia)
+                picture_numbers = f'\\(рис\\. *{start} \\- {end}*\\) '
+            text += f'`{cmd} {group["GNGRNO"]}` {picture_numbers}\\- {escape_markdown(group["GNLGEG"], 2)} \\({escape_markdown(group["GNLGRU"], 2)}\\)\n'
+            media += gmedia
+        result = {'text' : text, 'media' : media}
+    else:
+        text = 'Обнаружено несколько групп запчастей\\.\n'
+        text += f'Их больше *{lower_bound}*\\, поэтому я выведу их списком без рисунков:\n'
+        for group in groups:
+            text += f'`{cmd} {group["GNGRNO"]}` \\- {escape_markdown(group["GNLGEG"], 2)} \\({escape_markdown(group["GNLGRU"], 2)}\\)\n'
+        result['text'] = text
 
-    return {'text' : text, 'media' : media}
+    return result
 
 async def on_vin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
