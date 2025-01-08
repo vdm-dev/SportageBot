@@ -153,7 +153,9 @@ def list_group(group: str):
         return text
     processed_parts = {}
     for part in parts:
-        if part["CDKEY1"] in processed_parts:
+        key = int(part["CDKEY1"])
+        if key in processed_parts:
+            processed_parts[key] = f'*{key}* _несколько вариантов_\n'
             continue
         partName = fetch_cat_record(catalogue, 'MDBPNCPF', 'PNPNCD', part["CDPNCD"])
         partCount = part["CDCQTY"].lstrip('0')
@@ -161,7 +163,7 @@ def list_group(group: str):
             partCount = f' \\(*{partCount}* шт\\.\\)'
         else:
             partCount = ''
-        processed_parts[int(part["CDKEY1"])] = f'*{part["CDKEY1"]}* `/p {part["CDPTNO"]}` {partCount}\n'
+        processed_parts[key] = f'*{key}* `/p {part["CDPTNO"]}` {partCount}\n'
 
     for key in sorted(processed_parts):
         text += processed_parts[key]
